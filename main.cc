@@ -105,31 +105,77 @@ int main(int argc, char** argv){
   int NEntries = t->GetEntries();
   //Fill the Distance Driven Binning
   TProfile3D* ddb= new TProfile3D(Form("ddb"),Form("ddb"),NbinsX, Xmin, Xmax, NbinsY,Ymin,Ymax,NbinsZ,Zmin,Zmax);
-  for(int i=0;i<100;i++){//Loop over all protons
+  for(int i=0;i<NEntries;i++){//Loop over all protons
     t->GetEntry(i);
     if(i%20000 == 0) cout<<i<<endl;
     if(part_name->compare("proton")==0){
       ComputeSpline(&Point,ddb);
     }
-  }  
-  //prepare the plan
-  int N = max(64, int( pow(2,ceil(log2(2*NbinsY))))) ; // for padding
-  fftw_complex *in, *out;
-  fftw_plan p;
-  in = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
-  out = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N);
-  ddb->Write("",TObject::kOverwrite);
-  for(int ix=0; ix<NbinsX;ix++){
-    for(int iz=0; iz<NbinsZ;iz++){
-      
+  }
 
+  ddb->Write("ddb",TObject::kOverwrite);
+  //Prepare the plan for the data
+  cout<<"Prepare the FFT Plan"<<endl;
+  int N = max(64, int( pow(2,ceil(log2(2*NbinsY))))) ; // for padding
+  fftw_complex *out_fft, *in_ifft, *out_filter;
+  double       *in_fft , *out_ifft, *in_filter;  
+  fftw_plan fft, ifft, fft_filter;;
+  in_fft           = (double*) fftw_malloc(sizeof(double) * N);
+  in_filter        = (double*) fftw_malloc(sizeof(double) * N);  
+  out_ifft         = (double*) fftw_malloc(sizeof(double) * N);    
+  out_fft          = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * (N / 2 + 1)); // only half the frequencies because it's real-only input
+  in_ifft          = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * (N / 2 + 1)); // Negative frequencies are symmetrical and redundant
+  out_filter       = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * (N / 2 + 1));
+
+  fft         = fftw_plan_dft_r2c_1d(N, in_fft, out_fft, FFTW_ESTIMATE);
+  fft_filter  = fftw_plan_dft_r2c_1d(N, in_filter, out_filter, FFTW_ESTIMATE);  
+  ifft        = fftw_plan_dft_c2r_1d(N, in_ifft, out_ifft, FFTW_ESTIMATE);
+
+  // Filter in Fourier Frequency (from real data to minimize artefact)
+  //------------------------------------------------------------------------------------------------------------------
+  cout<<"Define the Filter (Ramp so far)"<<endl;
+  in_filter[0] = 0.25;
+  for(int i =1; i<N; i++){
+    if(i%2==0) in_filter[i] = 0;
+    else{
+      if(i<(N/2+1)) in_filter[i]= -1 / pow( M_PI*i,2);
+      else in_filter[i] = -1 / pow( M_PI*(N-i),2);
+    }
+  } //Checked
+
+
+  fftw_execute(fft_filter); // Transform to Fourier domain
+  for(int i=0; i<(N/2+1); i++) out_filter[i][0] = 2*out_filter[i][0];
+
+  // Fourier Transform the DDB, filter and perform the inverse transform
+  //------------------------------------------------------------------------------------------------------------------
+  cout<<"Filter Slice by Slice"<<endl;
+  double Norm = 1./512.;  // Inverse transform scale the value by 1/N ( or 1/(N/2+1) here since we use half frequencies)
+  for(int ix=0; ix<NbinsX-1;ix++){
+    for(int iz=0; iz<NbinsZ-1;iz++){
+      //Reset
+      memset(in_ifft, 0, sizeof(fftw_complex) * (N / 2 + 1));
+      memset(out_fft, 0, sizeof(fftw_complex) * (N / 2 + 1));      
+      memset(out_ifft,0, sizeof(double) * N);
+      memset(in_fft,  0, sizeof(double) * N);      
+
+      
+      for(int iy=0; iy<NbinsY; iy++) in_fft[iy] = ddb->GetBinContent(ix,iy,iz);     // Fill the fft array
+      fftw_execute(fft); // Transform to Fourier Domain
+      for(int j=0; j<(N/2+1); j++){
+	in_ifft[j][0] = out_fft[j][0]*out_filter[j][0]; // Real
+	in_ifft[j][1] = out_fft[j][1]; // Imaginary
+      }
+      fftw_execute(ifft); // Inverse transform
+      for(int iy=0; iy<NbinsY; iy++) ddb->SetBinContent(ix,iy,iz, Norm*out_ifft[iy]); //Normalize
     }
   }
 
-  p = fftw_plan_dft_1d(N, in, out, FFTW_FORWARD, FFTW_ESTIMATE);
-  fftw_execute(p); /* repeat as needed */
-  fftw_destroy_plan(p);
-  fftw_free(in); fftw_free(out);
+  ddb->Write("ddb_filtered",TObject::kOverwrite);
+  fftw_destroy_plan(fft);
+  fftw_destroy_plan(ifft);  
+  fftw_free(in_fft); fftw_free(out_fft);
+  fftw_free(in_ifft); fftw_free(out_ifft);  
   phaseFile->Close();
   return 0;
 }
@@ -141,10 +187,7 @@ double findWET(double Einit,double Estop){
   int it_Einit = lower_bound(Energy.begin(), Energy.end(), Einit)-Energy.begin();
   int it_Estop = lower_bound(Energy.begin(), Energy.end(), Estop)-Energy.begin();
   double WET   = 0 ;
-  for(int i = it_Estop; i<it_Einit; i++){
-    //WET += 0.01/dEdXBins[i];
-    WET += 0.1/dEdXBins[i];
-  }
+  for(int i = it_Estop; i<it_Einit; i++) WET += 0.1/dEdXBins[i];
   return WET;
 }
 ////////////////////////////////////////////
