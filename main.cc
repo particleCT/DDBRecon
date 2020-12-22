@@ -25,7 +25,6 @@
 #include <fftw3.h>
 #include "TVirtualFFT.h"
 using namespace std;
-#define NProj 1
 
 struct Particle{
   Float_t x0,y0,z0,px0,py0,pz0;
@@ -105,6 +104,7 @@ int main(int argc, char** argv){
   int NEntries = t->GetEntries();
   //Fill the Distance Driven Binning
   TProfile3D* ddb= new TProfile3D(Form("ddb"),Form("ddb"),NbinsX, Xmin, Xmax, NbinsY,Ymin,Ymax,NbinsZ,Zmin,Zmax);
+  TH3D* ddb_filtered= new TH3D(Form("ddb_filtered"),Form("ddb_filtered"),NbinsX, Xmin, Xmax, NbinsY,Ymin,Ymax,NbinsZ,Zmin,Zmax);
   for(int i=0;i<NEntries;i++){//Loop over all protons
     t->GetEntry(i);
     if(i%20000 == 0) cout<<i<<endl;
@@ -143,35 +143,64 @@ int main(int argc, char** argv){
     }
   } //Checked
 
-
   fftw_execute(fft_filter); // Transform to Fourier domain
   for(int i=0; i<(N/2+1); i++) out_filter[i][0] = 2*out_filter[i][0];
 
   // Fourier Transform the DDB, filter and perform the inverse transform
+  // The -1 comes from the bin over/underflow
   //------------------------------------------------------------------------------------------------------------------
-  cout<<"Filter Slice by Slice"<<endl;
-  double Norm = 1./512.;  // Inverse transform scale the value by 1/N ( or 1/(N/2+1) here since we use half frequencies)
-  for(int ix=0; ix<NbinsX-1;ix++){
-    for(int iz=0; iz<NbinsZ-1;iz++){
-      //Reset
-      memset(in_ifft, 0, sizeof(fftw_complex) * (N / 2 + 1));
-      memset(out_fft, 0, sizeof(fftw_complex) * (N / 2 + 1));      
-      memset(out_ifft,0, sizeof(double) * N);
-      memset(in_fft,  0, sizeof(double) * N);      
+  //Reset
+  /*memset(in_ifft, 0, sizeof(fftw_complex) * (N / 2 + 1));
+    memset(out_fft, 0, sizeof(fftw_complex) * (N / 2 + 1));      
+    memset(out_ifft,0, sizeof(double) * N);
+    memset(in_fft,  0, sizeof(double) * N);      */
+  //if(ix==100&&iz==100) cout<<ix<<" "<<iy<<" "<<iz<<" "<<Norm*out_ifft[iy]<<endl;
+  TVector3 Source_Position(0,0,0); // At infinitiy
+  TVector3 Source_Ref_Position(0,0,0); // Position of the voxel in the source referential
+  TVector3 Lab_Ref_Position(0,0,0); // Position of the voxel in the lab referential
 
-      
-      for(int iy=0; iy<NbinsY; iy++) in_fft[iy] = ddb->GetBinContent(ix,iy,iz);     // Fill the fft array
-      fftw_execute(fft); // Transform to Fourier Domain
-      for(int j=0; j<(N/2+1); j++){
-	in_ifft[j][0] = out_fft[j][0]*out_filter[j][0]; // Real
-	in_ifft[j][1] = out_fft[j][1]; // Imaginary
+  TVector3 uX(1,0,0);     
+  TVector3 uY(0,1,0);     
+  TVector3 uZ(0,0,1);
+  // Here we should do the loop -- might change it for parallelization
+  int NProj = 30;
+  int Step  = (int) 360./NProj;
+  for(int deg=0; deg<360; deg+=Step){
+    double rad = float(deg)*TMath::Pi()/180.;
+    Source_Position.RotateZ(rad);
+    uX.RotateZ(rad);
+    uY.RotateZ(rad);  
+
+    cout<<rad<<" Filter Slice by Slice"<<endl;
+    double Norm = 1./N;  // Inverse transform scale the value by 1/N 
+    for(int ix=0; ix<NbinsX;ix++){ // Cross through X  
+      for(int iz=0; iz<NbinsZ;iz++){ // Rotate through Z
+
+	// Do the Fourier Filtering
+	for(int iy=0; iy<NbinsY; iy++) in_fft[iy] = ddb->GetBinContent(ix,iy,iz);     // Fill the fft array
+	fftw_execute(fft); // Transform to Fourier Domain
+	for(int j=0; j<(N/2+1); j++){
+	  in_ifft[j][0] = out_fft[j][0]*out_filter[j][0]; // Real 
+	  in_ifft[j][1] = out_fft[j][1]*out_filter[j][0]; // Imaginary
+	}
+	fftw_execute(ifft); // Inverse transform
+	for(int iy=0; iy<NbinsY; iy++){ // Rotate and Fill
+	  //ddb_filtered->SetBinContent(ix,iy,iz, Norm*out_ifft[iy]); //Normalize -- Checked	  
+	  Source_Ref_Position.SetX(ddb_filtered->GetXaxis()->GetBinCenter(ix));
+	  Source_Ref_Position.SetY(ddb_filtered->GetYaxis()->GetBinCenter(iy));      
+	  Source_Ref_Position.SetZ(ddb_filtered->GetZaxis()->GetBinCenter(iz));
+	  //Lab_Ref_Position.SetZ( (Source_Ref_Position - Source_Position).Dot(uZ) );
+	  //Lab_Ref_Position.SetX( (Source_Ref_Position - Source_Position).Dot(uX) );
+	  //Lab_Ref_Position.SetY( (Source_Ref_Position - Source_Position).Dot(uY) );
+	  //ddb_filtered->Fill(Lab_Ref_Position.x(), Lab_Ref_Position.y(), Lab_Ref_Position.z(), Norm*out_ifft[iy]); //Normalized -- Checked
+	  Source_Ref_Position.RotateZ(rad);
+	  ddb_filtered->Fill(Source_Ref_Position.x(), Source_Ref_Position.y(), Source_Ref_Position.z(), Norm*out_ifft[iy]); //Normalized -- Checked
+	}
       }
-      fftw_execute(ifft); // Inverse transform
-      for(int iy=0; iy<NbinsY; iy++) ddb->SetBinContent(ix,iy,iz, Norm*out_ifft[iy]); //Normalize
     }
   }
-
-  ddb->Write("ddb_filtered",TObject::kOverwrite);
+  ddb_filtered->Scale(TMath::Pi()/(2.*NProj));
+  ddb_filtered->Write("",TObject::kOverwrite);
   fftw_destroy_plan(fft);
   fftw_destroy_plan(ifft);  
   fftw_free(in_fft); fftw_free(out_fft);
