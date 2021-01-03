@@ -101,7 +101,7 @@ int main(int argc, char** argv){
     dEdXBins.push_back(data[1]);
   }
 
-  int NEntries = t->GetEntries();
+  int NEntries = 100000;//t->GetEntries();
   //Fill the Distance Driven Binning
   TProfile3D* ddb= new TProfile3D(Form("ddb"),Form("ddb"),NbinsX, Xmin, Xmax, NbinsY,Ymin,Ymax,NbinsZ,Zmin,Zmax);
   TH3D* ddb_filtered= new TH3D(Form("ddb_filtered"),Form("ddb_filtered"),NbinsX, Xmin, Xmax, NbinsY,Ymin,Ymax,NbinsZ,Zmin,Zmax);
@@ -173,7 +173,7 @@ int main(int argc, char** argv){
 
     cout<<rad<<" Filter Slice by Slice"<<endl;
     double Norm = 1./N;  // Inverse transform scale the value by 1/N 
-    for(int ix=0; ix<NbinsX;ix++){ // Cross through X  
+    for(int iy=0; iy<NbinsY;iy++){ // Cross through Y
       for(int iz=0; iz<NbinsZ;iz++){ // Rotate through Z
 
 	// Do the Fourier Filtering
@@ -186,14 +186,16 @@ int main(int argc, char** argv){
 	fftw_execute(ifft); // Inverse transform
 	for(int iy=0; iy<NbinsY; iy++){ // Rotate and Fill
 	  //ddb_filtered->SetBinContent(ix,iy,iz, Norm*out_ifft[iy]); //Normalize -- Checked	  
+
 	  Source_Ref_Position.SetX(ddb_filtered->GetXaxis()->GetBinCenter(ix));
 	  Source_Ref_Position.SetY(ddb_filtered->GetYaxis()->GetBinCenter(iy));      
 	  Source_Ref_Position.SetZ(ddb_filtered->GetZaxis()->GetBinCenter(iz));
+	  Source_Ref_Position.RotateZ(-1*rad); // In the inertial referential need to rotate backward
 	  //Lab_Ref_Position.SetZ( (Source_Ref_Position - Source_Position).Dot(uZ) );
 	  //Lab_Ref_Position.SetX( (Source_Ref_Position - Source_Position).Dot(uX) );
 	  //Lab_Ref_Position.SetY( (Source_Ref_Position - Source_Position).Dot(uY) );
 	  //ddb_filtered->Fill(Lab_Ref_Position.x(), Lab_Ref_Position.y(), Lab_Ref_Position.z(), Norm*out_ifft[iy]); //Normalized -- Checked
-	  Source_Ref_Position.RotateZ(rad);
+	  
 	  ddb_filtered->Fill(Source_Ref_Position.x(), Source_Ref_Position.y(), Source_Ref_Position.z(), Norm*out_ifft[iy]); //Normalized -- Checked
 	}
       }
