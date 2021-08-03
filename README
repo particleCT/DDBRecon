@@ -1,0 +1,67 @@
+
+#################################################################################
+ Distance-driven binning particle CT reconstruction
+#################################################################################
+
+This process works for root projection files that have bee preprocessed to produce the 'Full output' from the experimentally acquired data using the pCT collaboration prototype scanner
+
+#################################################################################
+1. Running the code
+#################################################################################
+
+The process has two steps.
+
+To compile the code, CMakeLists.txt and a compile.sh script are provided in the DDBRecon
+
+The examples assume that the user is working from the 'DDBRecon' Directory
+
+1. run the main script to perform the distance driven binning on each projection
+
+	-'/bin/main projection projection_filter noise_reconstruction CT_filteri [PF_threshold] [prior_file]'
+
+		-projection - the root projection file that is to be used in the reconstruction
+
+		-projection_filter - the type of filtering that should be applied to the projection data (integer 0-3)
+			- No filtering (0)
+			- dEE & MaxEnergyTransfer & Threshold Filter  (1) **Note this filter is applied to the subsequent filters too**
+			- Three-sigma Filter (2)
+			- Prior Filter (3)
+			*** The filter tags/values must already be in the projection files this code only reads the requested tag from the projections data ***
+
+		-noise_reconstruction (integer 0-1)
+			- Image reconstruction (0)
+			- Noise reconstruction (1)
+
+		- CT_filter - the filter to be used in the back projection (string)
+			- Ram-Lak
+			- Cosine
+
+		- PF_threshold *only if using prior filter* - the threshold to use for the prior filter (float 0-1)
+
+		-[prior_file] *optional*  - a root file containing a TH3D object of a previous reconstruction named 'ddb_out'
+			- uses a prior reconstruction to detect the hull and perform binning in the following ways:
+
+				- Before the object
+					 - particles travel in straight lines following the entrance tracker direction vector (p0)
+
+				- Inside the object
+					- Most likely path calculated using cubic splines
+
+				- After exiting the object
+					- particles travel in straight lines following the exit tracker direction vector (p1)
+
+	- output (outputs are written to the projection file)
+		- TProfile3D 'ddb' - containing the unfiltered result fo the binning
+		- Tprofile3D 'ddb_filtered' - filtered 'ddb' orientated at the projection angle
+
+
+2. run the Reconstruct script on all projection files to create the final reconstruction
+
+	- 'python Reconstruct.py /PATH_TO_PROJECTIONS/'
+		-output (outputs written to current directory)
+			- recon_out.npz - a numpy .npz array that contains the 3D array of the reconstruction
+
+optional
+       - 'python npz-root.py ./recon_out ./output_file_name'
+                - creates root file with TH3D of the output array called RSP in the output file specified. 
+		-NOTE: dimensions are currently hard coded so will need to be changed depending on reconstruction
